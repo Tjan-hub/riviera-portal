@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#080808">
+  <title>RIVIERA – Mitgliederportal</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="authView" class="auth-shell">
+    <section class="auth-card">
+      <img class="logo" src="assets/riviera-logo.png" alt="RIVIERA Logo" onerror="this.style.display='none'">
+      <div class="wordmark">RIVIERA</div>
+      <p class="muted center">MITGLIEDERPORTAL</p>
+      <div class="tabs">
+        <button class="tab active" data-auth-tab="login">Anmelden</button>
+        <button class="tab" data-auth-tab="signup">Registrieren</button>
+      </div>
+      <form id="authForm">
+        <label>E-Mail<input id="email" type="email" autocomplete="email" required></label>
+        <label>Passwort<input id="password" type="password" minlength="8" autocomplete="current-password" required></label>
+        <button class="gold-button full" type="submit" id="authSubmit">Anmelden</button>
+      </form>
+      <p id="authMessage" class="message" aria-live="polite"></p>
+      <p class="muted tiny center">Bei geschlossener Registrierung sind neue Konten gesperrt.</p>
+    </section>
+  </main>
+
+  <div id="appView" class="app hidden">
+    <aside class="sidebar">
+      <div class="brand-small">RIVIERA</div>
+      <div id="currentUser" class="muted tiny"></div>
+      <nav id="mainNav">
+        <button data-page="members" class="nav-item active">Mitglieder</button>
+        <button data-page="attendance" class="nav-item">Anwesenheitsliste</button>
+        <button data-page="main-storage" class="nav-item">Hauptlager</button>
+        <button data-page="leader-storage" class="nav-item">Leaderlager</button>
+        <button data-page="weapon-storage" class="nav-item">Waffenlager</button>
+        <button data-page="admin" class="nav-item hidden" id="adminNav">Admin & Rechte</button>
+      </nav>
+      <button id="logout" class="outline-button full">Abmelden</button>
+    </aside>
+    <main class="content">
+      <header class="topbar">
+        <div><div class="eyebrow">RIVIERA MITGLIEDERPORTAL</div><h1 id="pageTitle">Mitglieder</h1></div>
+        <span id="rolePill" class="pill">Mitglied</span>
+      </header>
+      <section id="pageContent"></section>
+      <p id="globalMessage" class="message" aria-live="polite"></p>
+    </main>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
