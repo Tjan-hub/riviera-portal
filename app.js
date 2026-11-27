@@ -92,7 +92,7 @@ async function authSubmit(e) {
     msg(err.message, "authMessage");
   }
 }
-);}}
+
 async function boot(){if(!db)return;if(!session){$("authView").classList.remove("hidden");$("appView").classList.add("hidden");return;}
   try{await loadProfile();if(!profile.active)throw new Error("Dieses Konto ist deaktiviert.");$("authView").classList.add("hidden");$("appView").classList.remove("hidden");$("currentUser").textContent=profile.display_name||profile.email;$("rolePill").textContent=profile.role==="founder_admin"?"Gründer-Admin":profile.role==="admin"?"Admin":`Rang ${profile.rank}`;$("adminNav").classList.toggle("hidden",!(profile.role==="founder_admin"||profile.role==="admin"||can("permissions.grant")));await loadRegistrationState();showPage(page);}
   catch(err){msg(err.message);await db.auth.signOut();}}
