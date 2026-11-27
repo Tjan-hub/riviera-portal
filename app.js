@@ -80,7 +80,7 @@ async function authSubmit(e) {
   msg("Bitte warten…", "authMessage");
 
   try {
-    const username = $("email").value.trim();
+    const username = $("username").value.trim();
     const password = $("password").value;
     const internalEmail = usernameToInternalEmail(username);
 
