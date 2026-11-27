@@ -105,12 +105,91 @@ async function renderPage(){const c=$("pageContent");c.innerHTML="";msg("");
  if(page==="admin")return renderAdmin(c);
 }
 function noAccess(c){c.innerHTML='<div class="panel">Du hast für diesen Bereich keine Berechtigung.</div>';}
-async function renderMembers(c){if(!can("members.view")&&!can("members.manage"))return noAccess(c);
- const {data,error}=await db.from("profiles").select("id,email,display_name,rank,role,active").eq("active",true).order("rank",{ascending:false});if(error)throw error;
- c.innerHTML=`<div class="panel"><div class="toolbar"><div><h2>Mitgliederübersicht</h2><div class="subtle">Rang 1 bis 12 · Rang 12 ist der höchste Rang</div></div>${can("members.manage")?'<button id="addMember" class="gold-button small">Mitglied hinzufügen / einladen</button>':''}</div><div class="table-wrap"><table><thead><tr><th>Name / E-Mail</th><th>Rang</th><th>Kontotyp</th><th>Aktion</th></tr></thead><tbody>${data.map(m=>`<tr><td>${esc(m.display_name||m.email)}<div class="subtle">${esc(m.email)}</div></td><td>Rang ${m.rank}</td><td>${esc(m.role)}</td><td>${can("members.manage")?`<button class="outline-button small edit-member" data-id="${m.id}" data-name="${esc(m.display_name||"")}" data-rank="${m.rank}">Bearbeiten</button>${can("members.remove") && m.role!=="founder_admin"?` <button class="outline-button small danger remove-member" data-id="${m.id}">Entfernen</button>`:""}`:"–"}</td></tr>`).join("")}</tbody></table></div></div>`;
- if($("addMember"))$("addMember").onclick=()=>alert("Neue Mitglieder registrieren sich über die Registrierungsseite. Einladungen können später ergänzt werden.");
- c.querySelectorAll(".remove-member").forEach(b=>b.onclick=async()=>{if(!confirm("Dieses Mitglied wirklich entfernen?"))return;try{await rpc("remove_member",{target_user:b.dataset.id});await renderMembers(c);}catch(e){alert(e.message);}});
- c.querySelectorAll(".edit-member").forEach(b=>b.onclick=async()=>{const name=prompt("Anzeigename",b.dataset.name);if(name===null)return;const rank=Number(prompt("Rang 1–12",b.dataset.rank));if(!Number.isInteger(rank)||rank<1||rank>12)return alert("Ungültiger Rang.");try{await rpc("admin_update_member",{target_user:b.dataset.id,new_display_name:name,new_rank:rank});await renderMembers(c);}catch(e){alert(e.message);}});
+async function renderMembers(c){
+async function renderMembers(c) {
+  if (!can("members.view") && !can("members.manage")) return noAccess(c);
+
+  const { data, error } = await db
+    .from("profiles")
+    .select("id,username,display_name,rank,role,active")
+    .eq("active", true)
+    .order("rank", { ascending: false });
+
+  if (error) throw error;
+
+  c.innerHTML = `
+    <div class="panel">
+      <div class="toolbar">
+        <div>
+          <h2>Mitgliederübersicht</h2>
+          <div class="subtle">Rang 1 bis 12 · Rang 12 ist der höchste Rang</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Mitglied</th>
+              <th>Rang</th>
+              <th>Aufgaben</th>
+              <th>Aktion</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.map(m => `
+              <tr>
+                <td>${esc(m.username || m.display_name || "Mitglied")}</td>
+                <td>Rang ${m.rank}</td>
+                <td>–</td>
+                <td>
+                  ${can("members.manage")
+                    ? `<button class="outline-button small edit-member"
+                         data-id="${m.id}"
+                         data-name="${esc(m.username || m.display_name || "")}"
+                         data-rank="${m.rank}">Bearbeiten</button>`
+                    : "–"}
+                  ${can("members.remove") && m.role !== "founder_admin"
+                    ? ` <button class="outline-button small danger remove-member"
+                         data-id="${m.id}">Entfernen</button>`
+                    : ""}
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+
+  c.querySelectorAll(".remove-member").forEach(b => b.onclick = async () => {
+    if (!confirm("Dieses Mitglied wirklich entfernen?")) return;
+    try {
+      await rpc("remove_member", { target_user: b.dataset.id });
+      await renderMembers(c);
+    } catch (e) {
+      alert(e.message);
+    }
+  });
+
+  c.querySelectorAll(".edit-member").forEach(b => b.onclick = async () => {
+    const name = prompt("Benutzername", b.dataset.name);
+    if (name === null) return;
+    const rank = Number(prompt("Rang 1–12", b.dataset.rank));
+    if (!Number.isInteger(rank) || rank < 1 || rank > 12) {
+      return alert("Ungültiger Rang.");
+    }
+    try {
+      await rpc("admin_update_member", {
+        target_user: b.dataset.id,
+        new_display_name: name,
+        new_rank: rank
+      });
+      await renderMembers(c);
+    } catch (e) {
+      alert(e.message);
+    }
+  });
+}
+
 }
 async function renderAttendance(c){if(!can("attendance.view")&&!can("attendance.edit"))return noAccess(c);
  const {data:members,error}=await db.from("profiles").select("id,display_name,email,rank").eq("active",true).order("rank",{ascending:false});if(error)throw error;
