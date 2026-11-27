@@ -14,6 +14,24 @@ const PERMISSIONS = [
 ];
 let db, session, profile, page="members", authMode="login", registrationOpen=true;
 
+function usernameToInternalEmail(username) {
+  const normalized = username
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, ".")
+    .replace(/[^a-z0-9._-]/g, "")
+    .replace(/\.+/g, ".")
+    .replace(/^\.|\.$/g, "");
+
+  if (normalized.length < 3) {
+    throw new Error("Der Benutzername muss mindestens 3 gültige Zeichen enthalten.");
+  }
+
+  return normalized + "@riviera.invalid";
+}
+
 function msg(text, target="globalMessage"){ $(target).textContent=text||""; }
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 function dateKey(d){return d.toISOString().slice(0,10);}
@@ -31,10 +49,50 @@ async function init(){
   await boot();
 }
 function setAuthMode(mode){authMode=mode;document.querySelectorAll("[data-auth-tab]").forEach(b=>b.classList.toggle("active",b.dataset.authTab===mode));$("authSubmit").textContent=mode==="login"?"Anmelden":"Registrieren";$("password").autocomplete=mode==="login"?"current-password":"new-password";msg("");}
-async function authSubmit(e){e.preventDefault();msg("Bitte warten…","authMessage");const email=$("email").value.trim(),password=$("password").value;
-  try{if(authMode==="signup"){const {data,error}=await db.auth.signUp({email,password});if(error)throw error;msg(data.session?"Registrierung erfolgreich.":"Bitte bestätige deine E-Mail, falls E-Mail-Bestätigung aktiviert ist.","authMessage");}
-  else{const {error}=await db.auth.signInWithPassword({email,password});if(error)throw error;msg("");}}
-  catch(err){msg(err.message,"authMessage");}}
+
+async function authSubmit(e) {
+  e.preventDefault();
+  msg("Bitte warten…", "authMessage");
+
+  try {
+    const username = $("email").value.trim();
+    const password = $("password").value;
+    const internalEmail = usernameToInternalEmail(username);
+
+    if (authMode === "signup") {
+      const { data, error } = await db.auth.signUp({
+        email: internalEmail,
+        password,
+        options: {
+          data: {
+            username: username,
+            display_name: username
+          }
+        }
+      });
+
+      if (error) throw error;
+
+      msg(
+        data.session
+          ? "Registrierung erfolgreich."
+          : "Registrierung angelegt. Bitte prüfe die Supabase-Einstellungen.",
+        "authMessage"
+      );
+    } else {
+      const { error } = await db.auth.signInWithPassword({
+        email: internalEmail,
+        password
+      });
+
+      if (error) throw error;
+      msg("");
+    }
+  } catch (err) {
+    msg(err.message, "authMessage");
+  }
+}
+);}}
 async function boot(){if(!db)return;if(!session){$("authView").classList.remove("hidden");$("appView").classList.add("hidden");return;}
   try{await loadProfile();if(!profile.active)throw new Error("Dieses Konto ist deaktiviert.");$("authView").classList.add("hidden");$("appView").classList.remove("hidden");$("currentUser").textContent=profile.display_name||profile.email;$("rolePill").textContent=profile.role==="founder_admin"?"Gründer-Admin":profile.role==="admin"?"Admin":`Rang ${profile.rank}`;$("adminNav").classList.toggle("hidden",!(profile.role==="founder_admin"||profile.role==="admin"||can("permissions.grant")));await loadRegistrationState();showPage(page);}
   catch(err){msg(err.message);await db.auth.signOut();}}
