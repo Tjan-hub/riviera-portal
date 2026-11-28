@@ -11,22 +11,18 @@ const PERMISSIONS = [
   ["members.manage", "Mitglieder hinzufügen/bearbeiten"],
   ["attendance.view", "Anwesenheit ansehen"],
   ["attendance.edit", "Anwesenheit bearbeiten"],
-
   ["main_storage.view", "Hauptlager ansehen"],
   ["main_storage.items", "Hauptlager: Items hinzufügen"],
   ["main_storage.move", "Hauptlager: Ein-/Auslagern"],
   ["main_storage.items.remove", "Hauptlager: Items entfernen"],
-
   ["leader_storage.view", "Leaderlager ansehen"],
   ["leader_storage.items", "Leaderlager: Items hinzufügen"],
   ["leader_storage.move", "Leaderlager: Ein-/Auslagern"],
   ["leader_storage.items.remove", "Leaderlager: Items entfernen"],
-
   ["weapon_storage.view", "Waffenlager ansehen"],
   ["weapon_storage.items", "Waffenlager: Items hinzufügen"],
   ["weapon_storage.move", "Waffenlager: Ein-/Auslagern"],
   ["weapon_storage.items.remove", "Waffenlager: Items entfernen"],
-
   ["members.remove", "Mitglieder entfernen"],
   ["permissions.grant", "Anderen Rechte vergeben"],
   ["registration.manage", "Registrierung öffnen/sperren"]
@@ -38,6 +34,7 @@ let profile;
 let page = "members";
 let authMode = "login";
 let registrationOpen = true;
+let bootInProgress = false;
 
 function usernameToInternalEmail(username) {
   const normalized = String(username || "")
@@ -274,20 +271,29 @@ async function authSubmit(e) {
   }
 }
 
-/* NACH DEM LOGIN */
+/* NACH DEM LOGIN – KORRIGIERT */
 async function boot() {
-  if (!db) return;
+  if (!db || bootInProgress) return;
 
-  if (!session) {
-    $("authView")?.classList.remove("hidden");
-    $("appView")?.classList.add("hidden");
-    return;
-  }
+  bootInProgress = true;
 
   try {
+    const { data, error } = await db.auth.getSession();
+
+    if (error) throw error;
+
+    session = data.session;
+
+    if (!session) {
+      profile = null;
+      $("appView")?.classList.add("hidden");
+      $("authView")?.classList.remove("hidden");
+      return;
+    }
+
     await loadProfile();
 
-    if (!profile.active) {
+    if (!profile || !profile.active) {
       throw new Error("Dieses Konto ist deaktiviert.");
     }
 
@@ -320,12 +326,21 @@ async function boot() {
     }
 
     await loadRegistrationState();
-    showPage(page);
+    await renderPage();
 
   } catch (error) {
-    console.error("Fehler beim Laden des Profils:", error);
-    msg(error.message, "authMessage");
-    await db.auth.signOut();
+    console.error("Fehler beim Öffnen der Hauptseite:", error);
+
+    msg(
+      error.message || "Die Hauptseite konnte nicht geladen werden.",
+      "authMessage"
+    );
+
+    $("appView")?.classList.add("hidden");
+    $("authView")?.classList.remove("hidden");
+
+  } finally {
+    bootInProgress = false;
   }
 }
 
@@ -787,7 +802,6 @@ async function renderStorage(content, key) {
       </div>
     </div>`;
 
-  /* Item hinzufügen */
   const newItemForm = $("newItem");
 
   if (newItemForm) {
@@ -810,7 +824,6 @@ async function renderStorage(content, key) {
     };
   }
 
-  /* Bestand buchen */
   const moveItemForm = $("moveItem");
 
   if (moveItemForm) {
@@ -842,7 +855,6 @@ async function renderStorage(content, key) {
     };
   }
 
-  /* Item deaktivieren – Lagerprotokolle bleiben erhalten */
   content.querySelectorAll(".remove-storage-item").forEach(button => {
     button.onclick = async () => {
       const itemName = button.dataset.name || "dieses Item";
