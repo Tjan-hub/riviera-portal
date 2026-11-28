@@ -1215,7 +1215,7 @@ async function renderWeeklySubmission(content) {
   });
 }
 
-/* LAGER MIT LIVE-ITEM-SUCHE */
+/* LAGER MIT LIVE-ITEM-SUCHE UND LÖSCHPROTOKOLL */
 async function renderStorage(content, key) {
   const prefix = key;
   const viewPermission = prefix + ".view";
@@ -1349,12 +1349,28 @@ async function renderStorage(content, key) {
             ${logs.map(log => `
               <div class="log-entry">
                 <strong>${esc(log.actor_name || "Mitglied")}</strong>
+
                 <div>
-                  ${log.action === "in" ? "Eingelagert" : "Ausgelagert"}:
-                  ${esc(log.item_name)} × ${log.quantity}
+                  ${log.action === "in"
+                    ? "Eingelagert"
+                    : log.action === "out"
+                      ? "Ausgelagert"
+                      : "Gelöscht"}:
+                  ${esc(log.item_name)}
+                  ${log.action === "delete" ? "" : ` × ${log.quantity}`}
                 </div>
+
+                ${log.action === "delete" ? `
+                  <div style="color:#e53935; font-weight:bold;">
+                    Item wurde aus dem Lager entfernt
+                  </div>
+                ` : `
+                  <div class="subtle">
+                    Bemerkung: ${esc(log.note || "–")}
+                  </div>
+                `}
+
                 <div class="subtle">
-                  Bemerkung: ${esc(log.note || "–")} ·
                   ${new Date(log.created_at).toLocaleString("de-DE")}
                 </div>
               </div>
