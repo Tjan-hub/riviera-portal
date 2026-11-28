@@ -1,5 +1,5 @@
 
-/* RIVIERA – Frontend. Schreibaktionen laufen über Supabase-RPCs. */
+/* RIVIERA – Frontend mit Aufgabenverwaltung */
 
 const $ = (id) => document.getElementById(id);
 
@@ -9,6 +9,9 @@ const STATUS_COLORS = ["#27ae60", "#e67e22", "#e53935", "#a855f7"];
 const PERMISSIONS = [
   ["members.view", "Mitglieder ansehen"],
   ["members.manage", "Mitglieder hinzufügen/bearbeiten"],
+  ["members.rank.edit", "Mitglieder-Ränge bearbeiten"],
+  ["members.tasks.view", "Aufgaben ansehen"],
+  ["members.tasks.edit", "Aufgaben zuweisen und bearbeiten"],
   ["attendance.view", "Anwesenheit ansehen"],
   ["attendance.edit", "Anwesenheit bearbeiten"],
   ["main_storage.view", "Hauptlager ansehen"],
@@ -174,7 +177,7 @@ async function init() {
   await boot();
 }
 
-/* ANMELDEN / REGISTRIEREN UMSCHALTEN */
+/* ANMELDEN / REGISTRIEREN */
 function setAuthMode(mode) {
   authMode = mode;
 
@@ -198,7 +201,6 @@ function setAuthMode(mode) {
   msg("", "authMessage");
 }
 
-/* ANMELDUNG MIT BENUTZERNAME UND PASSWORT */
 async function authSubmit(e) {
   e.preventDefault();
 
@@ -217,13 +219,8 @@ async function authSubmit(e) {
     const username = usernameField.value.trim();
     const password = passwordField.value;
 
-    if (!username) {
-      throw new Error("Bitte deinen Benutzernamen eingeben.");
-    }
-
-    if (!password) {
-      throw new Error("Bitte dein Passwort eingeben.");
-    }
+    if (!username) throw new Error("Bitte deinen Benutzernamen eingeben.");
+    if (!password) throw new Error("Bitte dein Passwort eingeben.");
 
     const internalEmail = usernameToInternalEmail(username);
 
@@ -255,23 +252,18 @@ async function authSubmit(e) {
       });
 
       if (error) throw error;
-
-      if (!data.session) {
-        throw new Error("Anmeldung erfolgreich, aber keine Sitzung erhalten.");
-      }
+      if (!data.session) throw new Error("Keine Sitzung erhalten.");
 
       session = data.session;
       messageField.textContent = "";
-
       await boot();
     }
   } catch (error) {
-    messageField.textContent =
-      error.message || "Ein Fehler ist aufgetreten.";
+    messageField.textContent = error.message || "Ein Fehler ist aufgetreten.";
   }
 }
 
-/* NACH DEM LOGIN – KORRIGIERT */
+/* HAUPTSEITE */
 async function boot() {
   if (!db || bootInProgress) return;
 
@@ -279,7 +271,6 @@ async function boot() {
 
   try {
     const { data, error } = await db.auth.getSession();
-
     if (error) throw error;
 
     session = data.session;
@@ -330,15 +321,9 @@ async function boot() {
 
   } catch (error) {
     console.error("Fehler beim Öffnen der Hauptseite:", error);
-
-    msg(
-      error.message || "Die Hauptseite konnte nicht geladen werden.",
-      "authMessage"
-    );
-
+    msg(error.message || "Die Hauptseite konnte nicht geladen werden.", "authMessage");
     $("appView")?.classList.add("hidden");
     $("authView")?.classList.remove("hidden");
-
   } finally {
     bootInProgress = false;
   }
@@ -382,9 +367,7 @@ function showPage(p) {
 async function renderPage() {
   const content = $("pageContent");
 
-  if (!content) {
-    throw new Error("Der Seitenbereich wurde nicht gefunden.");
-  }
+  if (!content) throw new Error("Der Seitenbereich wurde nicht gefunden.");
 
   content.innerHTML = "";
   msg("");
@@ -404,18 +387,47 @@ function noAccess(content) {
     '<div class="panel">Du hast für diesen Bereich keine Berechtigung.</div>';
 }
 
-/* MITGLIEDER */
+/* MITGLIEDER UND AUFGABEN */
 async function renderMembers(content) {
-  if (!can("members.view") && !can("members.manage")) {
-    return noAccess(content);
-  }
+  const mayViewMembers =
+    can("members.view") ||
+    can("members.manage") ||
+    can("members.rank.edit") ||
+    can("members.tasks.view") ||
+    can("members.tasks.edit");
 
-  const { data, error } = await db.from("profiles")
+  if (!mayViewMembers) return noAccess(content);
+
+  const { data: members, error } = await db.from("profiles")
     .select("id,username,display_name,rank,role,active")
     .eq("active", true)
     .order("rank", { ascending: false });
 
   if (error) throw error;
+
+  let tasks = [];
+
+  if (members.length > 0) {
+    const { data, error: taskError } = await db.from("member_tasks")
+      .select("id,user_id,title,description,completed,created_at")
+      .in("user_id", members.map(member => member.id))
+      .order("created_at", { ascending: false });
+
+    if (taskError) throw taskError;
+    tasks = data || [];
+  }
+
+  const tasksByMember = new Map();
+
+  tasks.forEach(task => {
+    if (!tasksByMember.has(task.user_id)) {
+      tasksByMember.set(task.user_id, []);
+    }
+    tasksByMember.get(task.user_id).push(task);
+  });
+
+  const mayEditRanks = can("members.manage") || can("members.rank.edit");
+  const mayEditTasks = can("members.tasks.edit");
 
   content.innerHTML = `
     <div class="panel">
@@ -425,6 +437,7 @@ async function renderMembers(content) {
           <div class="subtle">Rang 1 bis 12 · Rang 12 ist der höchste Rang</div>
         </div>
       </div>
+
       <div class="table-wrap">
         <table>
           <thead>
@@ -436,37 +449,102 @@ async function renderMembers(content) {
             </tr>
           </thead>
           <tbody>
-            ${data.map(member => `
-              <tr>
-                <td>${esc(member.username || member.display_name || "Mitglied")}</td>
-                <td>Rang ${member.rank}</td>
-                <td>–</td>
-                <td>
-                  ${can("members.manage")
-                    ? `<button class="outline-button small edit-member"
-                         data-id="${member.id}"
-                         data-name="${esc(member.username || member.display_name || "")}"
-                         data-rank="${member.rank}">Bearbeiten</button>`
-                    : "–"}
-                  ${can("members.remove") && member.role !== "founder_admin"
-                    ? ` <button class="outline-button small danger remove-member"
-                         data-id="${member.id}">Entfernen</button>`
-                    : ""}
-                </td>
-              </tr>
-            `).join("")}
+            ${members.map(member => {
+              const memberTasks = tasksByMember.get(member.id) || [];
+              const memberName = member.username || member.display_name || "Mitglied";
+
+              return `
+                <tr>
+                  <td>${esc(memberName)}</td>
+                  <td>
+                    Rang ${member.rank}
+                    ${mayEditRanks
+                      ? `<button class="outline-button small edit-rank"
+                           data-id="${member.id}"
+                           data-name="${esc(memberName)}"
+                           data-rank="${member.rank}">Ändern</button>`
+                      : ""}
+                  </td>
+                  <td>
+                    ${memberTasks.length
+                      ? memberTasks.map(task => `
+                          <div class="task-entry">
+                            ${mayEditTasks
+                              ? `<label>
+                                   <input type="checkbox"
+                                     class="task-toggle"
+                                     data-id="${task.id}"
+                                     ${task.completed ? "checked" : ""}>
+                                   <span ${task.completed ? 'style="text-decoration:line-through;opacity:.6"' : ""}>
+                                     ${esc(task.title)}
+                                   </span>
+                                 </label>
+                                 <div class="subtle">${esc(task.description || "")}</div>
+                                 <button class="outline-button small edit-task"
+                                   data-id="${task.id}"
+                                   data-title="${esc(task.title)}"
+                                   data-description="${esc(task.description || "")}">
+                                   Bearbeiten
+                                 </button>
+                                 <button class="outline-button small danger delete-task"
+                                   data-id="${task.id}">Entfernen</button>`
+                              : `<div>
+                                   ${task.completed ? "✓ " : "○ "}
+                                   ${esc(task.title)}
+                                 </div>
+                                 ${task.description
+                                   ? `<div class="subtle">${esc(task.description)}</div>`
+                                   : ""}`}
+                          </div>
+                        `).join("")
+                      : '<span class="subtle">Keine Aufgaben</span>'}
+
+                    ${mayEditTasks
+                      ? `<div>
+                           <button class="gold-button small add-task"
+                             data-id="${member.id}"
+                             data-name="${esc(memberName)}">
+                             Aufgabe zuweisen
+                           </button>
+                         </div>`
+                      : ""}
+                  </td>
+                  <td>
+                    ${can("members.remove") && member.role !== "founder_admin"
+                      ? `<button class="outline-button small danger remove-member"
+                           data-id="${member.id}">Entfernen</button>`
+                      : "–"}
+                  </td>
+                </tr>
+              `;
+            }).join("")}
           </tbody>
         </table>
       </div>
     </div>`;
 
-  content.querySelectorAll(".remove-member").forEach(button => {
+  /* RANG ÄNDERN */
+  content.querySelectorAll(".edit-rank").forEach(button => {
     button.onclick = async () => {
-      if (!confirm("Dieses Mitglied wirklich entfernen?")) return;
+      const rankText = prompt(
+        `Neuen Rang für ${button.dataset.name} eingeben (1–12):`,
+        button.dataset.rank
+      );
+
+      if (rankText === null) return;
+
+      const rank = Number(rankText);
+
+      if (!Number.isInteger(rank) || rank < 1 || rank > 12) {
+        alert("Der Rang muss eine ganze Zahl zwischen 1 und 12 sein.");
+        return;
+      }
 
       try {
-        await rpc("remove_member", {
-          target_user: button.dataset.id
+        await rpc("admin_update_member", {
+          target_user: button.dataset.id,
+          new_display_name: button.dataset.name,
+          new_rank: rank
         });
 
         await renderMembers(content);
@@ -476,22 +554,112 @@ async function renderMembers(content) {
     };
   });
 
-  content.querySelectorAll(".edit-member").forEach(button => {
+  /* AUFGABE ZUWEISEN */
+  content.querySelectorAll(".add-task").forEach(button => {
     button.onclick = async () => {
-      const name = prompt("Benutzername", button.dataset.name);
-      if (name === null) return;
+      const title = prompt(
+        `Neue Aufgabe für ${button.dataset.name}:`
+      );
 
-      const rank = Number(prompt("Rang 1–12", button.dataset.rank));
+      if (title === null || !title.trim()) return;
 
-      if (!Number.isInteger(rank) || rank < 1 || rank > 12) {
-        return alert("Ungültiger Rang.");
-      }
+      const description = prompt("Beschreibung der Aufgabe (optional):", "");
+
+      if (description === null) return;
 
       try {
-        await rpc("admin_update_member", {
-          target_user: button.dataset.id,
-          new_display_name: name,
-          new_rank: rank
+        const { error } = await db.from("member_tasks").insert({
+          user_id: button.dataset.id,
+          title: title.trim(),
+          description: description.trim(),
+          created_by: session.user.id
+        });
+
+        if (error) throw error;
+
+        await renderMembers(content);
+      } catch (error) {
+        alert(error.message);
+      }
+    };
+  });
+
+  /* AUFGABE ERLEDIGT / NICHT ERLEDIGT */
+  content.querySelectorAll(".task-toggle").forEach(input => {
+    input.onchange = async () => {
+      try {
+        const { error } = await db.from("member_tasks")
+          .update({ completed: input.checked })
+          .eq("id", input.dataset.id);
+
+        if (error) throw error;
+
+        await renderMembers(content);
+      } catch (error) {
+        alert(error.message);
+        input.checked = !input.checked;
+      }
+    };
+  });
+
+  /* AUFGABE BEARBEITEN */
+  content.querySelectorAll(".edit-task").forEach(button => {
+    button.onclick = async () => {
+      const title = prompt("Aufgabe bearbeiten:", button.dataset.title);
+      if (title === null || !title.trim()) return;
+
+      const description = prompt(
+        "Beschreibung:",
+        button.dataset.description
+      );
+
+      if (description === null) return;
+
+      try {
+        const { error } = await db.from("member_tasks")
+          .update({
+            title: title.trim(),
+            description: description.trim(),
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", button.dataset.id);
+
+        if (error) throw error;
+
+        await renderMembers(content);
+      } catch (error) {
+        alert(error.message);
+      }
+    };
+  });
+
+  /* AUFGABE ENTFERNEN */
+  content.querySelectorAll(".delete-task").forEach(button => {
+    button.onclick = async () => {
+      if (!confirm("Diese Aufgabe wirklich entfernen?")) return;
+
+      try {
+        const { error } = await db.from("member_tasks")
+          .delete()
+          .eq("id", button.dataset.id);
+
+        if (error) throw error;
+
+        await renderMembers(content);
+      } catch (error) {
+        alert(error.message);
+      }
+    };
+  });
+
+  /* MITGLIED ENTFERNEN */
+  content.querySelectorAll(".remove-member").forEach(button => {
+    button.onclick = async () => {
+      if (!confirm("Dieses Mitglied wirklich entfernen?")) return;
+
+      try {
+        await rpc("remove_member", {
+          target_user: button.dataset.id
         });
 
         await renderMembers(content);
@@ -715,12 +883,10 @@ async function renderStorage(content, key) {
               `).join("")}
             </select>
           </label>
-
           <label class="field">
             Anzahl
             <input id="moveQty" type="number" min="1" step="1" required>
           </label>
-
           <label class="field">
             Aktion
             <select id="moveAction">
@@ -728,12 +894,10 @@ async function renderStorage(content, key) {
               <option value="out">Auslagern</option>
             </select>
           </label>
-
           <label class="field">
             Bemerkung
             <input id="moveNote" placeholder="Bemerkung">
           </label>
-
           <button class="gold-button">Buchen</button>
         </form>
       ` : ""}
@@ -757,8 +921,7 @@ async function renderStorage(content, key) {
                     <td>${item.quantity}</td>
                     ${can(removePermission) ? `
                       <td>
-                        <button
-                          class="outline-button small danger remove-storage-item"
+                        <button class="outline-button small danger remove-storage-item"
                           data-id="${item.id}"
                           data-name="${esc(item.name)}">
                           Entfernen
@@ -862,9 +1025,7 @@ async function renderStorage(content, key) {
       if (!confirm(
         `"${itemName}" wirklich aus dem Lager entfernen?\n\n` +
         "Der Artikel wird deaktiviert. Die bisherigen Lagerprotokolle bleiben erhalten."
-      )) {
-        return;
-      }
+      )) return;
 
       try {
         button.disabled = true;
