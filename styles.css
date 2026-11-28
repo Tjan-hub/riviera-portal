@@ -89,3 +89,40 @@ td{color:#eee}tbody tr:hover{background:rgba(210,177,91,.045)}
  .permission-list{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}
 }
 @media(max-width:460px){.sidebar nav{grid-template-columns:1fr 1fr}.nav-item{font-size:.65rem;padding:12px 9px}.topbar{align-items:flex-start}.auth-card{padding:25px 20px}}
+/* Lager: alle Eingabefelder in einer Reihe */
+#moveItem.toolbar {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1.2fr 1.2fr auto;
+  align-items: end;
+  gap: 12px;
+  width: 100%;
+}
+
+#moveItem .field {
+  min-width: 0;
+  margin: 0;
+}
+
+#moveItem input,
+#moveItem select {
+  width: 100%;
+  box-sizing: border-box;
+  height: 44px;
+}
+
+#moveItem button {
+  height: 44px;
+  min-width: 150px;
+  white-space: nowrap;
+}
+
+/* Auf schmalen Bildschirmen zweispaltig */
+@media (max-width: 800px) {
+  #moveItem.toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #moveItem button {
+    width: 100%;
+  }
+}
