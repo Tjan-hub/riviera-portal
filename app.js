@@ -671,15 +671,16 @@ async function renderAttendance(content) {
 
   if (error) throw error;
 
+  /* NEUESTE TAGE ZUERST */
   const days = Array.from({ length: 28 }, (_, i) => {
     const date = new Date();
     date.setHours(12, 0, 0, 0);
-    date.setDate(date.getDate() - 27 + i);
+    date.setDate(date.getDate() - i);
     return date;
   });
 
-  const start = dateKey(days[0]);
-  const end = dateKey(days[27]);
+  const start = dateKey(days[27]);
+  const end = dateKey(days[0]);
 
   const { data: records, error: recordError } = await db.from("attendance")
     .select("user_id,day,status")
