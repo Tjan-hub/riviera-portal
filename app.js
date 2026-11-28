@@ -816,7 +816,7 @@ async function renderAttendance(content) {
   }
 }
 
-/* LAGER */
+/* LAGER MIT LIVE-ITEM-SUCHE */
 async function renderStorage(content, key) {
   const prefix = key;
   const viewPermission = prefix + ".view";
@@ -863,14 +863,23 @@ async function renderStorage(content, key) {
       ${can(movePermission) ? `
         <form id="moveItem" class="toolbar">
           <label class="field">
-            Item
-            <select id="moveSelect" required>
-              ${items.map(item => `
-                <option value="${item.id}">
-                  ${esc(item.name)} (Bestand: ${item.quantity})
-                </option>
-              `).join("")}
-            </select>
+            Item suchen
+            <input
+              id="moveItemSearch"
+              type="text"
+              placeholder="Itemnamen eingeben ..."
+              autocomplete="off"
+              required
+            >
+            <input id="moveSelect" type="hidden">
+
+            <div
+              id="moveSuggestions"
+              class="panel"
+              style="display:none; margin-top:6px; padding:8px; max-height:180px; overflow-y:auto;"
+            ></div>
+
+            <div id="selectedItemInfo" class="subtle"></div>
           </label>
 
           <label class="field">
@@ -959,6 +968,7 @@ async function renderStorage(content, key) {
       </div>
     </div>`;
 
+  /* NEUES ITEM ANLEGEN */
   const newItemForm = $("newItem");
 
   if (newItemForm) {
@@ -981,27 +991,101 @@ async function renderStorage(content, key) {
     };
   }
 
+  /* ITEM-SUCHE MIT VORSCHLÄGEN */
+  const searchField = $("moveItemSearch");
+  const selectedField = $("moveSelect");
+  const suggestions = $("moveSuggestions");
+  const selectedInfo = $("selectedItemInfo");
+
+  if (searchField && selectedField && suggestions) {
+    function showSuggestions() {
+      const search = searchField.value.trim().toLowerCase();
+
+      selectedField.value = "";
+
+      if (selectedInfo) {
+        selectedInfo.textContent = "";
+      }
+
+      const matches = items.filter(item =>
+        item.name.toLowerCase().includes(search)
+      );
+
+      if (!search || matches.length === 0) {
+        suggestions.style.display = "none";
+        suggestions.innerHTML = "";
+        return;
+      }
+
+      suggestions.innerHTML = matches.map(item => `
+        <button
+          type="button"
+          class="outline-button"
+          data-id="${item.id}"
+          data-name="${esc(item.name)}"
+          data-quantity="${item.quantity}"
+          style="display:block; width:100%; text-align:left; margin-bottom:5px;"
+        >
+          ${esc(item.name)}
+          <span class="subtle"> – Bestand: ${item.quantity}</span>
+        </button>
+      `).join("");
+
+      suggestions.style.display = "block";
+
+      suggestions.querySelectorAll("button").forEach(button => {
+        button.onclick = () => {
+          selectedField.value = button.dataset.id;
+          searchField.value = button.dataset.name;
+          suggestions.style.display = "none";
+
+          if (selectedInfo) {
+            selectedInfo.textContent =
+              "Ausgewählt: " + button.dataset.name +
+              " · Bestand: " + button.dataset.quantity;
+          }
+        };
+      });
+    }
+
+    searchField.oninput = showSuggestions;
+    searchField.onfocus = showSuggestions;
+  }
+
+  /* EINLAGERN / AUSLAGERN */
   const moveItemForm = $("moveItem");
 
   if (moveItemForm) {
     moveItemForm.onsubmit = async event => {
       event.preventDefault();
 
-      const select = $("moveSelect");
+      const itemId = $("moveSelect");
       const quantity = $("moveQty");
       const action = $("moveAction");
       const note = $("moveNote");
 
-      if (!select || !quantity || !action || !note) {
+      if (!itemId || !itemId.value) {
+        alert("Bitte zuerst ein vorhandenes Item aus den Vorschlägen auswählen.");
+        return;
+      }
+
+      if (!quantity || !action || !note) {
         alert("Ein Lager-Eingabefeld fehlt.");
+        return;
+      }
+
+      const amount = Number(quantity.value);
+
+      if (!Number.isInteger(amount) || amount < 1) {
+        alert("Bitte eine gültige Anzahl eingeben.");
         return;
       }
 
       try {
         await rpc("move_inventory_item", {
-          item_id: select.value,
+          item_id: itemId.value,
           move_action: action.value,
-          move_quantity: Number(quantity.value),
+          move_quantity: amount,
           move_note: note.value
         });
 
@@ -1012,6 +1096,7 @@ async function renderStorage(content, key) {
     };
   }
 
+  /* ITEM ENTFERNEN */
   content.querySelectorAll(".remove-storage-item").forEach(button => {
     button.onclick = async () => {
       const itemName = button.dataset.name || "dieses Item";
