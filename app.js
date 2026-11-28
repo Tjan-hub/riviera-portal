@@ -14,6 +14,11 @@ const PERMISSIONS = [
   ["members.tasks.edit", "Aufgaben zuweisen/bearbeiten"],
   ["attendance.view", "Anwesenheit ansehen"],
   ["attendance.edit", "Anwesenheit bearbeiten"],
+
+  ["weekly_submission.view", "Wochenabgabe ansehen"],
+  ["weekly_submission.edit", "Wochenabgabe erstellen/bearbeiten"],
+  ["weekly_submission.status", "Wochenabgabe-Status ändern"],
+
   ["main_storage.view", "Hauptlager ansehen"],
   ["main_storage.items", "Hauptlager: Items hinzufügen"],
   ["main_storage.move", "Hauptlager: Ein-/Auslagern"],
@@ -74,6 +79,12 @@ function esc(s) {
 
 function dateKey(d) {
   return d.toISOString().slice(0, 10);
+}
+
+function formatDate(value) {
+  if (!value) return "–";
+  const date = new Date(value + "T12:00:00");
+  return date.toLocaleDateString("de-DE");
 }
 
 function can(p) {
@@ -366,6 +377,7 @@ function showPage(p) {
   const titles = {
     members: "Mitglieder",
     attendance: "Anwesenheitsliste",
+    "weekly-submission": "Wochenabgabe",
     "main-storage": "Hauptlager",
     "leader-storage": "Leaderlager",
     "weapon-storage": "Waffenlager",
@@ -394,6 +406,7 @@ async function renderPage() {
 
   if (page === "members") return renderMembers(content);
   if (page === "attendance") return renderAttendance(content);
+  if (page === "weekly-submission") return renderWeeklySubmission(content);
 
   if (page.endsWith("storage")) {
     return renderStorage(content, page.replace("-", "_"));
@@ -531,7 +544,6 @@ async function renderMembers(content) {
       </div>
     </div>`;
 
-  /* RANG ÄNDERN */
   content.querySelectorAll(".edit-rank").forEach(button => {
     button.onclick = async () => {
       const rankText = prompt(
@@ -562,7 +574,6 @@ async function renderMembers(content) {
     };
   });
 
-  /* AUFGABE ZUWEISEN */
   content.querySelectorAll(".add-task").forEach(button => {
     button.onclick = async () => {
       const title = prompt(`Neue Aufgabe für ${button.dataset.name}:`);
@@ -590,7 +601,6 @@ async function renderMembers(content) {
     };
   });
 
-  /* AUFGABE BEARBEITEN */
   content.querySelectorAll(".edit-task").forEach(button => {
     button.onclick = async () => {
       const title = prompt("Aufgabe bearbeiten:", button.dataset.title);
@@ -621,7 +631,6 @@ async function renderMembers(content) {
     };
   });
 
-  /* AUFGABE ENTFERNEN */
   content.querySelectorAll(".delete-task").forEach(button => {
     button.onclick = async () => {
       if (!confirm("Diese Aufgabe wirklich entfernen?")) return;
@@ -640,7 +649,6 @@ async function renderMembers(content) {
     };
   });
 
-  /* MITGLIED ENTFERNEN */
   content.querySelectorAll(".remove-member").forEach(button => {
     button.onclick = async () => {
       if (!confirm("Dieses Mitglied wirklich entfernen?")) return;
@@ -671,7 +679,6 @@ async function renderAttendance(content) {
 
   if (error) throw error;
 
-  /* NEUESTE TAGE ZUERST */
   const days = Array.from({ length: 28 }, (_, i) => {
     const date = new Date();
     date.setHours(12, 0, 0, 0);
@@ -814,6 +821,398 @@ async function renderAttendance(content) {
       }
     });
   }
+}
+
+/* WOCHENABGABE */
+async function renderWeeklySubmission(content) {
+  if (!can("weekly_submission.view")) {
+    return noAccess(content);
+  }
+
+  const mayCreateOrEdit = can("weekly_submission.edit");
+  const mayChangeStatus = can("weekly_submission.status");
+
+  const { data: members, error: memberError } = await db.from("profiles")
+    .select("id,username,display_name,rank,active")
+    .eq("active", true)
+    .order("rank", { ascending: false });
+
+  if (memberError) throw memberError;
+
+  const { data: submissions, error: submissionError } =
+    await db.from("weekly_submissions")
+      .select("id,item_name,quantity,due_date,created_by,created_at")
+      .order("created_at", { ascending: false });
+
+  if (submissionError) throw submissionError;
+
+  const submissionIds = (submissions || []).map(item => item.id);
+  let assignments = [];
+
+  if (submissionIds.length > 0) {
+    const { data, error } = await db.from("weekly_submission_members")
+      .select("id,submission_id,user_id,submitted,submitted_at")
+      .in("submission_id", submissionIds);
+
+    if (error) throw error;
+    assignments = data || [];
+  }
+
+  const { data: allProfiles, error: profilesError } = await db.from("profiles")
+    .select("id,username,display_name");
+
+  if (profilesError) throw profilesError;
+
+  const profileNames = new Map(
+    (allProfiles || []).map(member => [
+      member.id,
+      member.username || member.display_name || "Mitglied"
+    ])
+  );
+
+  const assignmentsBySubmission = new Map();
+
+  assignments.forEach(assignment => {
+    if (!assignmentsBySubmission.has(assignment.submission_id)) {
+      assignmentsBySubmission.set(assignment.submission_id, []);
+    }
+
+    assignmentsBySubmission.get(assignment.submission_id).push(assignment);
+  });
+
+  content.innerHTML = `
+    ${mayCreateOrEdit ? `
+      <div class="panel">
+        <h2>Neue Wochenabgabe erstellen</h2>
+        <p class="subtle">
+          Wähle ein Item, die gemeinsame Anzahl, eine Frist und die Mitglieder,
+          die diese Abgabe leisten sollen.
+        </p>
+
+        <form id="weeklySubmissionForm">
+          <div class="grid-two">
+            <label class="field">
+              Item
+              <input
+                id="weeklyItemName"
+                type="text"
+                placeholder="z. B. Metall"
+                required
+                maxlength="120"
+              >
+            </label>
+
+            <label class="field">
+              Anzahl pro Mitglied
+              <input
+                id="weeklyQuantity"
+                type="number"
+                min="1"
+                step="1"
+                placeholder="z. B. 100"
+                required
+              >
+            </label>
+          </div>
+
+          <label class="field">
+            Abgabefrist
+            <input id="weeklyDueDate" type="date" required>
+          </label>
+
+          <div class="field">
+            <strong>Mitglieder auswählen</strong>
+            <div class="subtle">Die ausgewählte Anzahl gilt für jedes Mitglied einzeln.</div>
+
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin:10px 0;">
+              <button type="button" class="outline-button small" id="weeklySelectAll">
+                Alle auswählen
+              </button>
+              <button type="button" class="outline-button small" id="weeklySelectNone">
+                Auswahl aufheben
+              </button>
+            </div>
+
+            <div class="panel" style="max-height:240px; overflow-y:auto; padding:12px;">
+              ${members.map(member => `
+                <label class="checkline" style="display:flex; gap:10px; padding:6px 0;">
+                  <input
+                    type="checkbox"
+                    class="weekly-member-check"
+                    value="${member.id}"
+                  >
+                  <span>
+                    ${esc(member.username || member.display_name || "Mitglied")}
+                    <span class="subtle"> · Rang ${member.rank}</span>
+                  </span>
+                </label>
+              `).join("") || '<div class="subtle">Keine aktiven Mitglieder gefunden.</div>'}
+            </div>
+          </div>
+
+          <button class="gold-button" type="submit">
+            Wochenabgabe erstellen
+          </button>
+        </form>
+      </div>
+    ` : ""}
+
+    <div class="panel">
+      <h2>Wochenabgaben & Verlauf</h2>
+      <p class="subtle">
+        Grün bedeutet abgegeben, Rot bedeutet noch nicht abgegeben.
+        Die Historie bleibt gespeichert.
+      </p>
+
+      <div
+        id="weeklyHistory"
+        style="max-height:620px; overflow-y:auto; padding-right:6px;"
+      >
+        ${submissions.length ? submissions.map(submission => {
+          const assigned = assignmentsBySubmission.get(submission.id) || [];
+          const submittedCount = assigned.filter(item => item.submitted).length;
+          const openCount = assigned.length - submittedCount;
+
+          return `
+            <div class="panel" style="margin-bottom:14px;">
+              <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start;">
+                <div>
+                  <h3 style="margin-top:0;">${esc(submission.item_name)}</h3>
+                  <div class="subtle">
+                    ${submission.quantity} Stück pro Mitglied
+                    · Frist: ${formatDate(submission.due_date)}
+                  </div>
+                  <div class="subtle">
+                    Erstellt: ${new Date(submission.created_at).toLocaleString("de-DE")}
+                  </div>
+                </div>
+
+                <div style="text-align:right;">
+                  <strong>${submittedCount} / ${assigned.length} abgegeben</strong>
+                  <div class="subtle">
+                    ${openCount} noch offen
+                  </div>
+                  ${mayCreateOrEdit ? `
+                    <button
+                      type="button"
+                      class="outline-button small weekly-edit"
+                      data-id="${submission.id}"
+                      data-item="${esc(submission.item_name)}"
+                      data-quantity="${submission.quantity}"
+                      data-date="${submission.due_date}">
+                      Angaben bearbeiten
+                    </button>
+                  ` : ""}
+                </div>
+              </div>
+
+              <div style="margin-top:12px;">
+                ${assigned.length ? assigned.map(assignment => {
+                  const name = profileNames.get(assignment.user_id) || "Unbekanntes Mitglied";
+
+                  return `
+                    <div
+                      style="
+                        display:flex;
+                        align-items:center;
+                        justify-content:space-between;
+                        gap:10px;
+                        flex-wrap:wrap;
+                        padding:9px 10px;
+                        margin:6px 0;
+                        border-radius:8px;
+                        background:${assignment.submitted
+                          ? "rgba(39,174,96,0.13)"
+                          : "rgba(229,57,53,0.13)"};
+                        border:1px solid ${assignment.submitted
+                          ? "rgba(39,174,96,0.5)"
+                          : "rgba(229,57,53,0.5)"};
+                      "
+                    >
+                      <div>
+                        <strong>${esc(name)}</strong>
+                        <div style="color:${assignment.submitted ? "#27ae60" : "#e53935"}; font-size:0.9em;">
+                          ${assignment.submitted ? "Abgegeben" : "Nicht abgegeben"}
+                        </div>
+                        ${assignment.submitted_at ? `
+                          <div class="subtle">
+                            Eingetragen: ${new Date(assignment.submitted_at).toLocaleString("de-DE")}
+                          </div>
+                        ` : ""}
+                      </div>
+
+                      ${mayChangeStatus ? `
+                        <button
+                          type="button"
+                          class="${assignment.submitted ? "outline-button" : "gold-button"} small weekly-status"
+                          data-id="${assignment.id}"
+                          data-submitted="${assignment.submitted}">
+                          ${assignment.submitted ? "Zurück auf offen" : "Als abgegeben markieren"}
+                        </button>
+                      ` : ""}
+                    </div>
+                  `;
+                }).join("") : `
+                  <div class="subtle">Für diese Wochenabgabe wurden keine Mitglieder gespeichert.</div>
+                `}
+              </div>
+            </div>
+          `;
+        }).join("") : `
+          <div class="subtle">Es wurden noch keine Wochenabgaben erstellt.</div>
+        `}
+      </div>
+    </div>
+  `;
+
+  /* ALLE MITGLIEDER AUSWÄHLEN */
+  const selectAllButton = $("weeklySelectAll");
+  const selectNoneButton = $("weeklySelectNone");
+
+  if (selectAllButton) {
+    selectAllButton.onclick = () => {
+      content.querySelectorAll(".weekly-member-check").forEach(check => {
+        check.checked = true;
+      });
+    };
+  }
+
+  if (selectNoneButton) {
+    selectNoneButton.onclick = () => {
+      content.querySelectorAll(".weekly-member-check").forEach(check => {
+        check.checked = false;
+      });
+    };
+  }
+
+  /* WOCHENABGABE ERSTELLEN */
+  const createForm = $("weeklySubmissionForm");
+
+  if (createForm) {
+    createForm.onsubmit = async event => {
+      event.preventDefault();
+
+      const itemName = $("weeklyItemName")?.value.trim();
+      const quantity = Number($("weeklyQuantity")?.value);
+      const dueDate = $("weeklyDueDate")?.value;
+
+      const memberIds = [
+        ...content.querySelectorAll(".weekly-member-check:checked")
+      ].map(check => check.value);
+
+      if (!itemName) {
+        alert("Bitte einen Itemnamen eingeben.");
+        return;
+      }
+
+      if (!Number.isInteger(quantity) || quantity < 1) {
+        alert("Bitte eine gültige Anzahl eingeben.");
+        return;
+      }
+
+      if (!dueDate) {
+        alert("Bitte eine Abgabefrist auswählen.");
+        return;
+      }
+
+      if (memberIds.length === 0) {
+        alert("Bitte mindestens ein Mitglied auswählen.");
+        return;
+      }
+
+      try {
+        const submitButton = createForm.querySelector('button[type="submit"]');
+        if (submitButton) submitButton.disabled = true;
+
+        await rpc("create_weekly_submission", {
+          p_item_name: itemName,
+          p_quantity: quantity,
+          p_due_date: dueDate,
+          p_member_ids: memberIds
+        });
+
+        alert("Die Wochenabgabe wurde erstellt.");
+        await renderWeeklySubmission(content);
+      } catch (error) {
+        alert(error.message || "Die Wochenabgabe konnte nicht erstellt werden.");
+        const submitButton = createForm.querySelector('button[type="submit"]');
+        if (submitButton) submitButton.disabled = false;
+      }
+    };
+  }
+
+  /* WOCHENABGABE BEARBEITEN */
+  content.querySelectorAll(".weekly-edit").forEach(button => {
+    button.onclick = async () => {
+      const newItem = prompt(
+        "Itemname ändern:",
+        button.dataset.item
+      );
+
+      if (newItem === null || !newItem.trim()) return;
+
+      const newQuantityText = prompt(
+        "Anzahl pro Mitglied ändern:",
+        button.dataset.quantity
+      );
+
+      if (newQuantityText === null) return;
+
+      const newQuantity = Number(newQuantityText);
+
+      if (!Number.isInteger(newQuantity) || newQuantity < 1) {
+        alert("Die Anzahl muss eine ganze Zahl ab 1 sein.");
+        return;
+      }
+
+      const newDate = prompt(
+        "Neue Abgabefrist (JJJJ-MM-TT):",
+        button.dataset.date
+      );
+
+      if (newDate === null) return;
+
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
+        alert("Bitte das Datum im Format JJJJ-MM-TT eingeben.");
+        return;
+      }
+
+      try {
+        await rpc("update_weekly_submission", {
+          p_submission_id: button.dataset.id,
+          p_item_name: newItem.trim(),
+          p_quantity: newQuantity,
+          p_due_date: newDate
+        });
+
+        await renderWeeklySubmission(content);
+      } catch (error) {
+        alert(error.message || "Die Wochenabgabe konnte nicht bearbeitet werden.");
+      }
+    };
+  });
+
+  /* ABGABESTATUS ÄNDERN */
+  content.querySelectorAll(".weekly-status").forEach(button => {
+    button.onclick = async () => {
+      const currentlySubmitted = button.dataset.submitted === "true";
+      const nextStatus = !currentlySubmitted;
+
+      try {
+        button.disabled = true;
+
+        await rpc("set_weekly_submission_status", {
+          p_assignment_id: button.dataset.id,
+          p_submitted: nextStatus
+        });
+
+        await renderWeeklySubmission(content);
+      } catch (error) {
+        button.disabled = false;
+        alert(error.message || "Der Status konnte nicht geändert werden.");
+      }
+    };
+  });
 }
 
 /* LAGER MIT LIVE-ITEM-SUCHE */
@@ -968,7 +1367,6 @@ async function renderStorage(content, key) {
       </div>
     </div>`;
 
-  /* NEUES ITEM ANLEGEN */
   const newItemForm = $("newItem");
 
   if (newItemForm) {
@@ -991,7 +1389,6 @@ async function renderStorage(content, key) {
     };
   }
 
-  /* ITEM-SUCHE MIT VORSCHLÄGEN */
   const searchField = $("moveItemSearch");
   const selectedField = $("moveSelect");
   const suggestions = $("moveSuggestions");
@@ -1052,7 +1449,6 @@ async function renderStorage(content, key) {
     searchField.onfocus = showSuggestions;
   }
 
-  /* EINLAGERN / AUSLAGERN */
   const moveItemForm = $("moveItem");
 
   if (moveItemForm) {
@@ -1096,7 +1492,6 @@ async function renderStorage(content, key) {
     };
   }
 
-  /* ITEM ENTFERNEN */
   content.querySelectorAll(".remove-storage-item").forEach(button => {
     button.onclick = async () => {
       const itemName = button.dataset.name || "dieses Item";
